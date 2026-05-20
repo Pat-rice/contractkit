@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 
-	"github.com/patrice/petstore-api/internal/db"
+	"github.com/patrice/contractkit/internal/db"
 )
 
 type Repository interface {

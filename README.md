@@ -1,4 +1,4 @@
-# Go API Template — Spec-First, Multi-Version
+# contractkit — Spec-First, Multi-Version Go API Template
 
 A reference template for building Go HTTP APIs where the **API contract is the source of truth** and **multiple API versions are first-class citizens**.
 
@@ -22,7 +22,8 @@ The example domain is a Pet Store with two versions (`1.0` and `2.0`), where `2.
 | Go server codegen | [oapi-codegen](https://github.com/oapi-codegen/oapi-codegen) (strict server, `net/http`) |
 | Database codegen | [sqlc](https://sqlc.dev) (pgx/v5 driver) |
 | Database | PostgreSQL 16 |
-| Migrations | [golang-migrate](https://github.com/golang-migrate/migrate) (embedded via `embed.FS`) |
+| Migrations | [golang-migrate](https://github.com/golang-migrate/migrate) CLI (run as a one-off Docker step or K8s Job) |
+| Request validation | [go-playground/validator/v10](https://github.com/go-playground/validator), driven by TypeSpec `x-oapi-codegen-extra-tags` extensions |
 | Integration tests | [dockertest](https://github.com/ory/dockertest) (ephemeral Postgres per run) |
 | Contract fuzzing | [schemathesis](https://schemathesis.readthedocs.io) |
 | Lint | [golangci-lint](https://golangci-lint.run) |
@@ -57,8 +58,9 @@ The example domain is a Pet Store with two versions (`1.0` and `2.0`), where `2.
         │    └─ uses internal/db (sqlc-generated)      │
         └──────────────────────────────────────────────┘
 
-        db/queries/*.sql ──sqlc──▶ internal/db/*.sql.go
-        db/migrations/*.sql ──embed.FS──▶ migrate runner
+        db/queries/*.sql    ──sqlc──────────────▶ internal/db/*.sql.go
+        db/migrations/*.sql ──migrate/migrate──▶ Postgres (just migrate-up / K8s Job)
+                          └──embed.FS─────────▶ integration tests (testutil)
 ```
 
 ### Multi-version mechanics
@@ -105,6 +107,22 @@ Adding a new version is a three-step process:
 2. Annotate the additions/removals/renames with `@added` / `@removed` / `@renamedFrom`.
 3. Run `just generate` — a new `api/openapi-spec/<version>/` directory appears.
 
+### Validation
+
+Field-level constraints declared in TypeSpec are surfaced two ways:
+
+1. **In the OpenAPI document**, where [schemathesis](https://schemathesis.readthedocs.io) enforces them during contract fuzzing.
+2. **At runtime in Go**, by attaching equivalent [go-playground/validator](https://github.com/go-playground/validator) struct tags via the `x-oapi-codegen-extra-tags` extension. oapi-codegen copies the tags onto the generated request structs; a strict-server middleware in `cmd/api/main.go` runs `validator.StructCtx` on each decoded request and returns a structured `400 VALIDATION_ERROR` listing every failing field.
+
+```typespec
+@minLength(1)
+@maxLength(255)
+@extension("x-oapi-codegen-extra-tags", #{ validate: "required,min=1,max=255" })
+name: string;
+```
+
+The `Error` model carries an optional `details: ValidationDetail[]` payload — also defined in TypeSpec, so error shape is part of the contract.
+
 ## Project layout
 
 ```
@@ -118,18 +136,17 @@ api/openapi-spec/         Generated OpenAPI documents (one folder per version)
   1.0/openapi.yaml
   2.0/openapi.yaml
 
-cmd/api/                  Application entrypoint (HTTP server, signal handling)
+cmd/api/                  Application entrypoint (HTTP server, signal handling, validator middleware)
 internal/api/             Generated Go server interface and types (oapi-codegen)
 internal/db/              Generated type-safe queries (sqlc)
 internal/server/          Hand-written handlers implementing StrictServerInterface
 internal/config/          Env-based configuration
-internal/migrate/         Embedded migration runner (golang-migrate)
 internal/testutil/        dockertest helpers for integration tests
 
-db/migrations/            Up/down SQL migrations (embedded into the binary)
+db/migrations/            Up/down SQL migrations (applied via the migrate/migrate Docker image)
 db/queries/               SQL queries consumed by sqlc
 db/seeds/                 Optional dev seed data
-db/embed.go               //go:embed of migrations and seeds
+db/embed.go               //go:embed of migrations (used by integration tests) and seeds
 
 justfile                  All generation, build, test, lint, fuzz, migrate recipes
 docker-compose.yaml       Local Postgres + API container
@@ -151,7 +168,8 @@ cp .env.example .env
 # 3. Generate everything (TypeSpec → OpenAPI → Go server, SQL → Go db)
 just generate
 
-# 4. Apply migrations (one-off; same image is what you'd run as a K8s Job)
+# 4. Apply migrations (runs the migrate/migrate Docker image; same image you'd
+#    schedule as a K8s Job — the API binary does not run migrations itself)
 just migrate-up
 
 # 5. Build and run
@@ -203,7 +221,7 @@ The version argument on `generate-api` and `fuzz` selects which generated OpenAP
 
 ## Workflow for adding an endpoint or field
 
-1. **Contract.** Edit `api/typespec/{routes,models}.tsp`. Annotate with `@added(Versions.vX)` if the change should only apply to a new version.
+1. **Contract.** Edit `api/typespec/{routes,models}.tsp`. Annotate with `@added(Versions.vX)` if the change should only apply to a new version. For request-side validation, attach an `@extension("x-oapi-codegen-extra-tags", #{ validate: "..." })` alongside the TypeSpec constraint so the rule fires at runtime as well as in the spec.
 2. **Schema.** If new state needs to be persisted, add a migration in `db/migrations/` and a query in `db/queries/`.
 3. **Generate.** `just generate` regenerates OpenAPI, Go server types, and Go db code.
 4. **Implement.** Add the handler method to `internal/server/server.go` — the project will not compile until you do (the `StrictServerInterface` enforces it).
@@ -234,7 +252,14 @@ The `Pet`, `NewPet`, and `UpdatePet` models also gain a `tags: string[]` field i
 
 - **Unit tests** live alongside the code (`*_test.go`).
 - **Integration tests** spin up an ephemeral Postgres via [dockertest](https://github.com/ory/dockertest), apply migrations, and run against a real database. See `internal/testutil/testdb.go`.
-- **Contract fuzzing** uses schemathesis. It reads the OpenAPI document and generates randomised requests, asserting that responses conform to the declared schema and that no 500s are returned. Run against any version with `just fuzz <version>`.
+- **Contract fuzzing** uses schemathesis. It reads the OpenAPI document and generates randomised requests, asserting that responses conform to the declared schema and that no 500s are returned. The recipe takes a positional version argument that defaults to `1.0`:
+
+  ```bash
+  just fuzz          # fuzz v1.0 (default)
+  just fuzz 2.0      # fuzz v2.0
+  ```
+
+  The recipe depends on `generate-typespec`, so the spec is always regenerated before the run.
 
 ## Prerequisites
 

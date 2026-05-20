@@ -15,6 +15,7 @@ vendor/
 # Node (TypeSpec)
 node_modules/
 api/typespec/node_modules/
+api/openapi-spec
 
 # IDE
 .idea/

@@ -9,8 +9,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/patrice/petstore-api/internal/api"
-	"github.com/patrice/petstore-api/internal/db"
+	"github.com/patrice/contractkit/internal/api"
+	"github.com/patrice/contractkit/internal/db"
 )
 
 type fakeRepo struct {

@@ -5,16 +5,15 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/ory/dockertest/v3"
 	"github.com/ory/dockertest/v3/docker"
 
-	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
-
-	dbpkg "github.com/patrice/petstore-api/db"
-	"github.com/patrice/petstore-api/internal/migrate"
+	dbpkg "github.com/patrice/contractkit/db"
 )
 
 type TestDB struct {
@@ -52,7 +51,9 @@ func SetupTestDB() (*TestDB, error) {
 		return nil, fmt.Errorf("could not start postgres container: %w", err)
 	}
 
-	resource.Expire(120)
+	if err := resource.Expire(120); err != nil {
+		log.Printf("could not set resource expiry: %v", err)
+	}
 
 	databaseURL := fmt.Sprintf("postgres://postgres:postgres@localhost:%s/petstore_test?sslmode=disable",
 		resource.GetPort("5432/tcp"))
@@ -68,21 +69,20 @@ func SetupTestDB() (*TestDB, error) {
 		}
 		return pgPool.Ping(ctx)
 	}); err != nil {
-		pool.Purge(resource)
+		if purgeErr := pool.Purge(resource); purgeErr != nil {
+			log.Printf("could not purge resource: %v", purgeErr)
+		}
 		return nil, fmt.Errorf("could not connect to postgres: %w", err)
 	}
 
-	migrationsFS, err := fs.Sub(dbpkg.MigrationsFS, "migrations")
-	if err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := applyMigrations(ctx, pgPool); err != nil {
 		pgPool.Close()
-		pool.Purge(resource)
-		return nil, fmt.Errorf("could not sub migrations FS: %w", err)
-	}
-
-	if err := migrate.Run(migrationsFS, databaseURL); err != nil {
-		pgPool.Close()
-		pool.Purge(resource)
-		return nil, fmt.Errorf("could not run migrations: %w", err)
+		if purgeErr := pool.Purge(resource); purgeErr != nil {
+			log.Printf("could not purge resource: %v", purgeErr)
+		}
+		return nil, fmt.Errorf("could not apply migrations: %w", err)
 	}
 
 	return &TestDB{
@@ -90,6 +90,30 @@ func SetupTestDB() (*TestDB, error) {
 		pool:     pool,
 		resource: resource,
 	}, nil
+}
+
+func applyMigrations(ctx context.Context, pool *pgxpool.Pool) error {
+	entries, err := fs.ReadDir(dbpkg.MigrationsFS, "migrations")
+	if err != nil {
+		return fmt.Errorf("read migrations dir: %w", err)
+	}
+	var ups []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".up.sql") {
+			ups = append(ups, e.Name())
+		}
+	}
+	sort.Strings(ups)
+	for _, name := range ups {
+		data, err := fs.ReadFile(dbpkg.MigrationsFS, "migrations/"+name)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", name, err)
+		}
+		if _, err := pool.Exec(ctx, string(data)); err != nil {
+			return fmt.Errorf("apply %s: %w", name, err)
+		}
+	}
+	return nil
 }
 
 func (tdb *TestDB) Teardown() {

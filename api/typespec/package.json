@@ -1,5 +1,5 @@
 {
-  "name": "petstore-typespec",
+  "name": "contractkit-typespec",
   "private": true,
   "dependencies": {
     "@typespec/compiler": "latest",

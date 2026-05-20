@@ -44,17 +44,6 @@ jobs:
     needs: build-and-test
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Start services
-        run: docker compose up -d --build --wait
-
-      - name: Install schemathesis
-        run: pip install schemathesis
-
-      - name: Run schemathesis fuzz tests
-        run: schemathesis run api/openapi-spec/2.0/openapi.yaml --base-url http://localhost:8080 --checks all --wait-for-schema 30
-
-      - name: Stop services
-        if: always()
-        run: docker compose down
+      - uses: schemathesis/action@v2
+        with:
+          schema: api/openapi-spec/2.0/openapi.yaml

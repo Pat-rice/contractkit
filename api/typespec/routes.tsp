@@ -1,4 +1,5 @@
 using Http;
+using OpenAPI;
 using Versioning;
 
 namespace PetStore;
@@ -6,13 +7,25 @@ namespace PetStore;
 @route("/pets")
 namespace Pets {
   @get
-  op listPets(@query limit?: int32, @query cursor?: string): {
+  op listPets(
+    @query
+    @minValue(1)
+    @maxValue(200)
+    @extension("x-oapi-codegen-extra-tags", #{ validate: "omitempty,gte=1,lte=200" })
+    limit?: int32,
+
+    @query cursor?: string,
+  ): {
     @statusCode statusCode: 200;
     @body body: PetPage;
   };
 
   @get
-  op getPet(@path petId: int64): {
+  op getPet(
+    @path
+    @minValue(1)
+    petId: int64,
+  ): {
     @statusCode statusCode: 200;
     @body body: Pet;
   } | {
@@ -30,7 +43,13 @@ namespace Pets {
   };
 
   @put
-  op updatePet(@path petId: int64, @body body: UpdatePet): {
+  op updatePet(
+    @path
+    @minValue(1)
+    petId: int64,
+
+    @body body: UpdatePet,
+  ): {
     @statusCode statusCode: 200;
     @body body: Pet;
   } | {
@@ -42,7 +61,11 @@ namespace Pets {
   };
 
   @delete
-  op deletePet(@path petId: int64): {
+  op deletePet(
+    @path
+    @minValue(1)
+    petId: int64,
+  ): {
     @statusCode statusCode: 204;
   } | {
     @statusCode statusCode: 404;
@@ -52,7 +75,11 @@ namespace Pets {
   @added(Versions.v2)
   @route("{petId}/tags")
   @get
-  op listPetTags(@path petId: int64): {
+  op listPetTags(
+    @path
+    @minValue(1)
+    petId: int64,
+  ): {
     @statusCode statusCode: 200;
     @body body: string[];
   } | {

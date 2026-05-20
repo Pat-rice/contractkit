@@ -56,9 +56,13 @@ test: test-unit test-integration
 lint:
     {{docker_run}} {{lint_image}} golangci-lint run ./...
 
-# Fuzz a running server with schemathesis. Pass version to choose the contract.
-fuzz version="1.0":
-    {{docker_run}} --network host {{schemathesis_image}} run api/openapi-spec/{{version}}/openapi.yaml --base-url http://localhost:8080
+# Fuzz a running server with schemathesis. Regenerates the spec first; pass version to choose the contract.
+fuzz version="1.0": generate-typespec
+    docker run --rm --network host \
+        -v {{justfile_directory()}}/api/openapi-spec:/spec \
+        {{schemathesis_image}} run --url http://localhost:8080 /spec/{{version}}/openapi.yaml
+
+# docker run --rm schemathesis/schemathesis run https://example.schemathesis.io/openapi.json
 
 # Start all services with Docker Compose
 docker-up:

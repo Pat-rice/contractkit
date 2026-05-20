@@ -7,9 +7,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/patrice/petstore-api/internal/api"
-	"github.com/patrice/petstore-api/internal/db"
-	"github.com/patrice/petstore-api/internal/testutil"
+	"github.com/patrice/contractkit/internal/api"
+	"github.com/patrice/contractkit/internal/db"
+	"github.com/patrice/contractkit/internal/testutil"
 )
 
 var testDB *testutil.TestDB
