@@ -1,0 +1,345 @@
+openapi: 3.0.0
+info:
+  title: Pet Store API
+  description: A template Pet Store API built with TypeSpec, oapi-codegen, and sqlc.
+  version: '2.0'
+tags: []
+paths:
+  /health:
+    get:
+      operationId: Health_healthCheck
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                required:
+                  - status
+  /pets:
+    get:
+      operationId: Pets_listPets
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 200
+            x-oapi-codegen-extra-tags:
+              validate: omitempty,gte=1,lte=200
+          x-oapi-codegen-extra-tags:
+            validate: omitempty,gte=1,lte=200
+          explode: false
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PetPage'
+    post:
+      operationId: Pets_createPet
+      parameters: []
+      responses:
+        '201':
+          description: The request has succeeded and a new resource has been created as a result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pet'
+        '400':
+          description: The server could not understand the request due to invalid syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewPet'
+  /pets/{petId}:
+    get:
+      operationId: Pets_getPet
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pet'
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    put:
+      operationId: Pets_updatePet
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pet'
+        '400':
+          description: The server could not understand the request due to invalid syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePet'
+    delete:
+      operationId: Pets_deletePet
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        '204':
+          description: 'There is no content to send for this request, but the headers may be useful. '
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /pets/{petId}/tags:
+    get:
+      operationId: Pets_listPetTags
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+components:
+  schemas:
+    NewPet:
+      type: object
+      required:
+        - name
+        - kind
+        - age
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          x-oapi-codegen-extra-tags:
+            validate: required,min=1,max=255
+        kind:
+          allOf:
+            - $ref: '#/components/schemas/PetKind'
+          x-oapi-codegen-extra-tags:
+            validate: required,oneof=dog cat fish bird reptile
+        age:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 100
+          x-oapi-codegen-extra-tags:
+            validate: gte=0,lte=100
+        tags:
+          type: array
+          items:
+            type: string
+          maxItems: 32
+          x-oapi-codegen-extra-tags:
+            validate: omitempty,max=32,dive,min=1,max=64
+    Pet:
+      type: object
+      required:
+        - id
+        - name
+        - kind
+        - age
+        - createdAt
+        - updatedAt
+        - tags
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        kind:
+          $ref: '#/components/schemas/PetKind'
+        age:
+          type: integer
+          format: int32
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        tags:
+          type: array
+          items:
+            type: string
+    PetKind:
+      type: string
+      enum:
+        - dog
+        - cat
+        - fish
+        - bird
+        - reptile
+    PetPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Pet'
+        nextCursor:
+          type: string
+    Problem:
+      type: object
+      required:
+        - type
+        - title
+        - status
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+          format: int32
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProblemError'
+    ProblemError:
+      type: object
+      required:
+        - name
+        - in
+        - rule
+        - detail
+      properties:
+        name:
+          type: string
+        in:
+          type: string
+          enum:
+            - body
+            - query
+            - path
+            - header
+        rule:
+          type: string
+        detail:
+          type: string
+    UpdatePet:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          x-oapi-codegen-extra-tags:
+            validate: omitempty,min=1,max=255
+        kind:
+          allOf:
+            - $ref: '#/components/schemas/PetKind'
+          x-oapi-codegen-extra-tags:
+            validate: omitempty,oneof=dog cat fish bird reptile
+        age:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 100
+          x-oapi-codegen-extra-tags:
+            validate: omitempty,gte=0,lte=100
+        tags:
+          type: array
+          items:
+            type: string
+          maxItems: 32
+          x-oapi-codegen-extra-tags:
+            validate: omitempty,max=32,dive,min=1,max=64
+    Versions:
+      type: string
+      enum:
+        - '1.0'
+        - '2.0'
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+    variables: {}

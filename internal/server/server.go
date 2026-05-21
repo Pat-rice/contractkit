@@ -12,6 +12,7 @@ import (
 
 	"github.com/patrice/contractkit/internal/api"
 	"github.com/patrice/contractkit/internal/db"
+	"github.com/patrice/contractkit/internal/problem"
 )
 
 type Server struct {
@@ -79,7 +80,7 @@ func (s *Server) PetsGetPet(ctx context.Context, request api.PetsGetPetRequestOb
 	pet, err := s.repo.GetPet(ctx, request.PetID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return api.PetsGetPet404JSONResponse{Code: "NOT_FOUND", Message: "pet not found"}, nil
+			return api.PetsGetPet404ApplicationProblemPlusJSONResponse(problem.NotFound("pet not found")), nil
 		}
 		return nil, err
 	}
@@ -114,7 +115,7 @@ func (s *Server) PetsUpdatePet(ctx context.Context, request api.PetsUpdatePetReq
 	pet, err := s.repo.UpdatePet(ctx, params)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return api.PetsUpdatePet404JSONResponse{Code: "NOT_FOUND", Message: "pet not found"}, nil
+			return api.PetsUpdatePet404ApplicationProblemPlusJSONResponse(problem.NotFound("pet not found")), nil
 		}
 		return nil, err
 	}
@@ -122,9 +123,12 @@ func (s *Server) PetsUpdatePet(ctx context.Context, request api.PetsUpdatePetReq
 }
 
 func (s *Server) PetsDeletePet(ctx context.Context, request api.PetsDeletePetRequestObject) (api.PetsDeletePetResponseObject, error) {
-	err := s.repo.DeletePet(ctx, request.PetID)
+	affected, err := s.repo.DeletePet(ctx, request.PetID)
 	if err != nil {
 		return nil, err
+	}
+	if affected == 0 {
+		return api.PetsDeletePet404ApplicationProblemPlusJSONResponse(problem.NotFound("pet not found")), nil
 	}
 	return api.PetsDeletePet204Response{}, nil
 }

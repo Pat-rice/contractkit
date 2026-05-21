@@ -24,6 +24,7 @@ The example domain is a Pet Store with two versions (`1.0` and `2.0`), where `2.
 | Database | PostgreSQL 16 |
 | Migrations | [golang-migrate](https://github.com/golang-migrate/migrate) CLI (run as a one-off Docker step or K8s Job) |
 | Request validation | [go-playground/validator/v10](https://github.com/go-playground/validator), driven by TypeSpec `x-oapi-codegen-extra-tags` extensions |
+| Error responses | [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem Details (`application/problem+json`) with a project-owned `errors[]` extension for per-field validation |
 | Integration tests | [dockertest](https://github.com/ory/dockertest) (ephemeral Postgres per run) |
 | Contract fuzzing | [schemathesis](https://schemathesis.readthedocs.io) |
 | Lint | [golangci-lint](https://golangci-lint.run) |
@@ -112,7 +113,7 @@ Adding a new version is a three-step process:
 Field-level constraints declared in TypeSpec are surfaced two ways:
 
 1. **In the OpenAPI document**, where [schemathesis](https://schemathesis.readthedocs.io) enforces them during contract fuzzing.
-2. **At runtime in Go**, by attaching equivalent [go-playground/validator](https://github.com/go-playground/validator) struct tags via the `x-oapi-codegen-extra-tags` extension. oapi-codegen copies the tags onto the generated request structs; a strict-server middleware in `cmd/api/main.go` runs `validator.StructCtx` on each decoded request and returns a structured `400 VALIDATION_ERROR` listing every failing field.
+2. **At runtime in Go**, by attaching equivalent [go-playground/validator](https://github.com/go-playground/validator) struct tags via the `x-oapi-codegen-extra-tags` extension. oapi-codegen copies the tags onto the generated request structs; a strict-server middleware in `cmd/api/main.go` runs `validator.StructCtx` on each decoded request and produces an RFC 9457 problem response listing every failing field.
 
 ```typespec
 @minLength(1)
@@ -121,14 +122,38 @@ Field-level constraints declared in TypeSpec are surfaced two ways:
 name: string;
 ```
 
-The `Error` model carries an optional `details: ValidationDetail[]` payload — also defined in TypeSpec, so error shape is part of the contract.
+### Error responses
+
+Handler-emitted 4xx/5xx responses follow [RFC 9457 — Problem Details for HTTP APIs](https://www.rfc-editor.org/rfc/rfc9457) and are served as `application/problem+json`. The `Problem` model (defined in `api/typespec/models.tsp`) carries the five canonical fields plus a project-owned `errors[]` extension used for per-field validation failures. Each entry locates the failure with a `name` + `in` discriminator (`body`, `query`, `path`, or `header`) instead of a JSON Pointer, so query and path failures don't need to fake a body location:
+
+```jsonc
+HTTP/1.1 400 Bad Request
+Content-Type: application/problem+json
+
+{
+  "type":     "urn:problem-type:contractkit:validationFailed",
+  "title":    "Bad Request",
+  "status":   400,
+  "detail":   "request validation failed",
+  "instance": "urn:uuid:164c2b32-…",
+  "errors": [
+    { "name": "name",    "in": "body",  "rule": "required", "detail": "is required" },
+    { "name": "tags[0]", "in": "body",  "rule": "min",      "detail": "must be at least 1" },
+    { "name": "limit",   "in": "query", "rule": "gte",      "detail": "must be >= 1" }
+  ]
+}
+```
+
+Type URIs live under `urn:problem-type:contractkit:` — currently `badRequest`, `validationFailed`, `resourceNotFound`, `internal` (exported as constants from `internal/problem`). The `instance` URN is logged server-side on every problem response so a client-reported `urn:uuid:…` can be grepped from the server logs. `errors[]` is capped at 20 entries (with a trailing truncation marker) to bound the response size against pathological payloads.
+
+Two known exceptions to the contract: Go's stdlib `http.ServeMux` writes plain-text 405 responses for method mismatches on registered routes, and any handler that sets a non-JSON `Content-Type` for a 4xx/5xx response is not rewritten. Everything else routes through `problem.Write` or the `application/json` → `application/problem+json` safety-net middleware in `internal/problem`.
 
 ## Project layout
 
 ```
 api/typespec/             TypeSpec source (the contract)
   main.tsp                  @service, @versioned, Versions enum
-  models.tsp                Pet, NewPet, UpdatePet, PetPage, Error
+  models.tsp                Pet, NewPet, UpdatePet, PetPage, Problem
   routes.tsp                Pets and Health namespaces
   tspconfig.yaml            emits to ../openapi-spec/<version>/
 
@@ -136,11 +161,12 @@ api/openapi-spec/         Generated OpenAPI documents (one folder per version)
   1.0/openapi.yaml
   2.0/openapi.yaml
 
-cmd/api/                  Application entrypoint (HTTP server, signal handling, validator middleware)
+cmd/api/                  Application entrypoint (HTTP server, signal handling, validator middleware, recover middleware, panic-to-problem)
 internal/api/             Generated Go server interface and types (oapi-codegen)
 internal/db/              Generated type-safe queries (sqlc)
 internal/server/          Hand-written handlers implementing StrictServerInterface
 internal/config/          Env-based configuration
+internal/problem/         RFC 9457 Problem builder + validator → ProblemError conversion + content-type safety-net middleware
 internal/testutil/        dockertest helpers for integration tests
 
 db/migrations/            Up/down SQL migrations (applied via the migrate/migrate Docker image)
@@ -195,6 +221,7 @@ Task runner is [just](https://github.com/casey/just). `.env` is auto-loaded.
 | `just generate-typespec` | Compile TypeSpec; emits one OpenAPI doc per declared version |
 | `just generate-api [version]` | oapi-codegen against `api/openapi-spec/<version>/openapi.yaml` (default `1.0`) |
 | `just generate-db` | sqlc generate |
+| `just verify-generate` | Regenerate and fail if any committed artifact under `api/openapi-spec/`, `internal/api/`, or `internal/db/` would change — wire into CI to catch unstaged spec drift |
 | `just build` | Build `bin/api` |
 | `just run` | Build and run locally (needs `DATABASE_URL`) |
 | `just test` | Unit + integration tests |

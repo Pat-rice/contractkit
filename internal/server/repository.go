@@ -11,5 +11,5 @@ type Repository interface {
 	GetPet(ctx context.Context, id int64) (db.Pet, error)
 	CreatePet(ctx context.Context, arg db.CreatePetParams) (db.Pet, error)
 	UpdatePet(ctx context.Context, arg db.UpdatePetParams) (db.Pet, error)
-	DeletePet(ctx context.Context, id int64) error
+	DeletePet(ctx context.Context, id int64) (int64, error)
 }

@@ -30,7 +30,8 @@ namespace Pets {
     @body body: Pet;
   } | {
     @statusCode statusCode: 404;
-    @body body: Error;
+    @header contentType: "application/problem+json";
+    @body body: Problem;
   };
 
   @post
@@ -39,7 +40,8 @@ namespace Pets {
     @body body: Pet;
   } | {
     @statusCode statusCode: 400;
-    @body body: Error;
+    @header contentType: "application/problem+json";
+    @body body: Problem;
   };
 
   @put
@@ -54,10 +56,12 @@ namespace Pets {
     @body body: Pet;
   } | {
     @statusCode statusCode: 404;
-    @body body: Error;
+    @header contentType: "application/problem+json";
+    @body body: Problem;
   } | {
     @statusCode statusCode: 400;
-    @body body: Error;
+    @header contentType: "application/problem+json";
+    @body body: Problem;
   };
 
   @delete
@@ -69,7 +73,8 @@ namespace Pets {
     @statusCode statusCode: 204;
   } | {
     @statusCode statusCode: 404;
-    @body body: Error;
+    @header contentType: "application/problem+json";
+    @body body: Problem;
   };
 
   @added(Versions.v2)
@@ -84,7 +89,8 @@ namespace Pets {
     @body body: string[];
   } | {
     @statusCode statusCode: 404;
-    @body body: Error;
+    @header contentType: "application/problem+json";
+    @body body: Problem;
   };
 }
 

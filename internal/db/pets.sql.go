@@ -37,13 +37,16 @@ func (q *Queries) CreatePet(ctx context.Context, arg CreatePetParams) (Pet, erro
 	return i, err
 }
 
-const deletePet = `-- name: DeletePet :exec
+const deletePet = `-- name: DeletePet :execrows
 DELETE FROM pets WHERE id = $1
 `
 
-func (q *Queries) DeletePet(ctx context.Context, id int64) error {
-	_, err := q.db.Exec(ctx, deletePet, id)
-	return err
+func (q *Queries) DeletePet(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.Exec(ctx, deletePet, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getPet = `-- name: GetPet :one

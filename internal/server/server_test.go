@@ -87,9 +87,12 @@ func (f *fakeRepo) UpdatePet(_ context.Context, arg db.UpdatePetParams) (db.Pet,
 	return p, nil
 }
 
-func (f *fakeRepo) DeletePet(_ context.Context, id int64) error {
+func (f *fakeRepo) DeletePet(_ context.Context, id int64) (int64, error) {
+	if _, ok := f.pets[id]; !ok {
+		return 0, nil
+	}
 	delete(f.pets, id)
-	return nil
+	return 1, nil
 }
 
 func TestCreateAndGetPet(t *testing.T) {
@@ -132,7 +135,7 @@ func TestGetPetNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, ok := resp.(api.PetsGetPet404JSONResponse); !ok {
+	if _, ok := resp.(api.PetsGetPet404ApplicationProblemPlusJSONResponse); !ok {
 		t.Fatalf("expected 404 response, got %T", resp)
 	}
 }
@@ -272,7 +275,7 @@ func TestDeletePet(t *testing.T) {
 	}
 
 	getResp, _ := srv.PetsGetPet(ctx, api.PetsGetPetRequestObject{PetID: created.ID})
-	if _, ok := getResp.(api.PetsGetPet404JSONResponse); !ok {
+	if _, ok := getResp.(api.PetsGetPet404ApplicationProblemPlusJSONResponse); !ok {
 		t.Fatalf("expected 404 after delete, got %T", getResp)
 	}
 }

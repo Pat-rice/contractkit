@@ -25,5 +25,5 @@ SET
 WHERE id = $1
 RETURNING id, name, kind, age, created_at, updated_at;
 
--- name: DeletePet :exec
+-- name: DeletePet :execrows
 DELETE FROM pets WHERE id = $1;

@@ -20,6 +20,13 @@ default:
 # Full code generation pipeline (TypeSpec + oapi-codegen + sqlc)
 generate: generate-typespec generate-api generate-db
 
+# Re-run code generation and fail if any tracked artifact changes. Wire this
+# into CI to catch a model.tsp / queries.sql edit that wasn't committed with
+# its regenerated output.
+verify-generate: generate
+    @git diff --exit-code -- api/openapi-spec internal/api internal/db || \
+        (echo "Generated artifacts out of date — run 'just generate' and commit the result" && exit 1)
+
 # TypeSpec -> OpenAPI YAML (emits all versions under api/openapi-spec/<version>/)
 generate-typespec:
     docker run --rm -v {{justfile_directory()}}:/work -w /work/api/typespec {{node_image}} sh -c "npm install && npx tsp compile ."

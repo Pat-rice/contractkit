@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"reflect"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/patrice/contractkit/internal/api"
 	"github.com/patrice/contractkit/internal/config"
 	"github.com/patrice/contractkit/internal/db"
+	"github.com/patrice/contractkit/internal/problem"
 	"github.com/patrice/contractkit/internal/server"
 )
 
@@ -30,18 +32,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	var logLevel slog.Level
-	switch cfg.LogLevel {
-	case "debug":
-		logLevel = slog.LevelDebug
-	case "warn":
-		logLevel = slog.LevelWarn
-	case "error":
-		logLevel = slog.LevelError
-	default:
-		logLevel = slog.LevelInfo
-	}
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: parseLogLevel(cfg.LogLevel)}))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -61,53 +52,11 @@ func main() {
 	queries := db.New(pool)
 	srv := server.New(queries, pool, logger)
 
-	validate := validator.New(validator.WithRequiredStructEnabled())
-	validate.RegisterTagNameFunc(func(fld reflect.StructField) string {
-		name := strings.SplitN(fld.Tag.Get("json"), ",", 2)[0]
-		if name == "-" || name == "" {
-			return fld.Name
-		}
-		return name
-	})
-
-	strictHandler := api.NewStrictHandlerWithOptions(srv, []api.StrictMiddlewareFunc{validationMiddleware(validate)}, api.StrictHTTPServerOptions{
-		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			err = json.NewEncoder(w).Encode(api.Error{Code: "BAD_REQUEST", Message: err.Error()})
-			if err != nil {
-				return
-			}
-		},
-		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			var ve validator.ValidationErrors
-			if errors.As(err, &ve) {
-				details := toValidationDetails(ve)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusBadRequest)
-				_ = json.NewEncoder(w).Encode(api.Error{
-					Code:    "VALIDATION_ERROR",
-					Message: "request validation failed",
-					Details: &details,
-				})
-				return
-			}
-			logger.Error("internal error", "error", err, "path", r.URL.Path, "method", r.Method)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			err = json.NewEncoder(w).Encode(api.Error{Code: "INTERNAL", Message: "internal server error"})
-			if err != nil {
-				return
-			}
-		},
-	})
-
-	mux := http.NewServeMux()
-	api.HandlerFromMux(strictHandler, mux)
+	handler := buildHandler(srv, logger)
 
 	httpServer := &http.Server{
 		Addr:         ":" + cfg.Port,
-		Handler:      mux,
+		Handler:      handler,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -134,6 +83,48 @@ func main() {
 	logger.Info("server stopped")
 }
 
+// buildHandler wires the strict handler, validator middleware, and the outer
+// chain (mux + content-type rewrite + panic recovery). Extracted so tests can
+// stand up the same wiring against httptest.
+func buildHandler(srv api.StrictServerInterface, logger *slog.Logger) http.Handler {
+	validate := validator.New(validator.WithRequiredStructEnabled())
+	validate.RegisterTagNameFunc(func(fld reflect.StructField) string {
+		name := strings.SplitN(fld.Tag.Get("json"), ",", 2)[0]
+		if name == "-" || name == "" {
+			return fld.Name
+		}
+		return name
+	})
+
+	strictHandler := api.NewStrictHandlerWithOptions(srv, []api.StrictMiddlewareFunc{validationMiddleware(validate)}, api.StrictHTTPServerOptions{
+		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			problem.Write(w, r, logger, problem.BadRequest(sanitizeRequestErr(err)))
+		},
+		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			var ve validator.ValidationErrors
+			if errors.As(err, &ve) {
+				problem.Write(w, r, logger, problem.ValidationFailed(problem.FromValidatorErrors(ve)))
+				return
+			}
+			logger.Error("handler error", "error", err, "path", r.URL.Path, "method", r.Method)
+			problem.Write(w, r, logger, problem.Internal("internal server error"))
+		},
+	})
+
+	mux := http.NewServeMux()
+	api.HandlerWithOptions(strictHandler, api.StdHTTPServerOptions{
+		BaseRouter: mux,
+		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			problem.Write(w, r, logger, problem.BadRequest(sanitizeBindErr(err)))
+		},
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		problem.Write(w, r, logger, problem.NotFound("route not found"))
+	})
+
+	return recoverMiddleware(logger)(problem.ContentTypeMiddleware(mux))
+}
+
 func validationMiddleware(v *validator.Validate) api.StrictMiddlewareFunc {
 	return func(f api.StrictHandlerFunc, _ string) api.StrictHandlerFunc {
 		return func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
@@ -149,51 +140,93 @@ func validationMiddleware(v *validator.Validate) api.StrictMiddlewareFunc {
 	}
 }
 
-func toValidationDetails(ve validator.ValidationErrors) []api.ValidationDetail {
-	out := make([]api.ValidationDetail, 0, len(ve))
-	for _, fe := range ve {
-		out = append(out, api.ValidationDetail{
-			Field:   fieldPath(fe),
-			Rule:    fe.Tag(),
-			Message: describeFieldError(fe),
+// recoverMiddleware turns a panic in any downstream handler into a 500
+// application/problem+json response and a structured log line with the stack.
+func recoverMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				if rec := recover(); rec != nil {
+					logger.Error("panic recovered",
+						"panic", fmt.Sprint(rec),
+						"path", r.URL.Path,
+						"method", r.Method,
+						"stack", string(debug.Stack()),
+					)
+					problem.Write(w, r, logger, problem.Internal("internal server error"))
+				}
+			}()
+			next.ServeHTTP(w, r)
 		})
 	}
-	return out
 }
 
-func fieldPath(fe validator.FieldError) string {
-	ns := fe.Namespace()
-	if i := strings.Index(ns, "."); i >= 0 {
-		return ns[i+1:]
+// sanitizeRequestErr returns a client-safe detail for body-decode failures from
+// the strict handler. Raw stdlib json errors leak Go struct names and types
+// (e.g. "cannot unmarshal string into Go struct field NewPet.age of type int32")
+// so we collapse them to a small fixed vocabulary keyed on the JSON tag.
+func sanitizeRequestErr(err error) string {
+	var ute *json.UnmarshalTypeError
+	if errors.As(err, &ute) {
+		if ute.Field != "" {
+			return fmt.Sprintf("field %q has the wrong type", lastJSONField(ute.Field))
+		}
+		return "request body has a field with the wrong type"
 	}
-	return fe.Field()
+	var se *json.SyntaxError
+	if errors.As(err, &se) {
+		return "request body is not valid JSON"
+	}
+	return "request body could not be parsed"
 }
 
-func describeFieldError(fe validator.FieldError) string {
-	switch fe.Tag() {
-	case "required":
-		return "is required"
-	case "min":
-		return fmt.Sprintf("must be at least %s", fe.Param())
-	case "max":
-		return fmt.Sprintf("must be at most %s", fe.Param())
-	case "gte":
-		return fmt.Sprintf("must be >= %s", fe.Param())
-	case "lte":
-		return fmt.Sprintf("must be <= %s", fe.Param())
-	case "gt":
-		return fmt.Sprintf("must be > %s", fe.Param())
-	case "lt":
-		return fmt.Sprintf("must be < %s", fe.Param())
-	case "oneof":
-		return fmt.Sprintf("must be one of [%s]", fe.Param())
-	case "email":
-		return "must be a valid email"
-	case "url":
-		return "must be a valid URL"
-	case "uuid":
-		return "must be a valid UUID"
+// sanitizeBindErr returns a client-safe detail for path/query/header binding
+// failures from oapi-codegen's outer router. The error types carry a
+// spec-defined ParamName which is safe to surface; the wrapped error is not.
+func sanitizeBindErr(err error) string {
+	var ipfe *api.InvalidParamFormatError
+	if errors.As(err, &ipfe) {
+		return fmt.Sprintf("parameter %q has an invalid format", ipfe.ParamName)
+	}
+	var rpe *api.RequiredParamError
+	if errors.As(err, &rpe) {
+		return fmt.Sprintf("required query parameter %q is missing", rpe.ParamName)
+	}
+	var rhe *api.RequiredHeaderError
+	if errors.As(err, &rhe) {
+		return fmt.Sprintf("required header %q is missing", rhe.ParamName)
+	}
+	var tmve *api.TooManyValuesForParamError
+	if errors.As(err, &tmve) {
+		return fmt.Sprintf("parameter %q has too many values", tmve.ParamName)
+	}
+	var upe *api.UnmarshalingParamError
+	if errors.As(err, &upe) {
+		return fmt.Sprintf("parameter %q is malformed", upe.ParamName)
+	}
+	var ucpe *api.UnescapedCookieParamError
+	if errors.As(err, &ucpe) {
+		return fmt.Sprintf("cookie parameter %q is malformed", ucpe.ParamName)
+	}
+	return "request parameters could not be parsed"
+}
+
+func lastJSONField(field string) string {
+	if i := strings.LastIndex(field, "."); i >= 0 {
+		return field[i+1:]
+	}
+	return field
+}
+
+func parseLogLevel(s string) slog.Level {
+	switch s {
+	case "debug":
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
 	default:
-		return fmt.Sprintf("failed %q validation", fe.Tag())
+		return slog.LevelInfo
 	}
 }

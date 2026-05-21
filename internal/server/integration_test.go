@@ -98,12 +98,15 @@ func TestIntegrationGetPetNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	notFound, ok := resp.(api.PetsGetPet404JSONResponse)
+	notFound, ok := resp.(api.PetsGetPet404ApplicationProblemPlusJSONResponse)
 	if !ok {
 		t.Fatalf("expected 404 response, got %T", resp)
 	}
-	if notFound.Code != "NOT_FOUND" {
-		t.Fatalf("expected NOT_FOUND code, got %s", notFound.Code)
+	if notFound.Type != "urn:problem-type:contractkit:resourceNotFound" {
+		t.Fatalf("unexpected problem type: %s", notFound.Type)
+	}
+	if notFound.Status != 404 {
+		t.Fatalf("expected status 404, got %d", notFound.Status)
 	}
 }
 
@@ -216,7 +219,7 @@ func TestIntegrationUpdatePetNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, ok := resp.(api.PetsUpdatePet404JSONResponse); !ok {
+	if _, ok := resp.(api.PetsUpdatePet404ApplicationProblemPlusJSONResponse); !ok {
 		t.Fatalf("expected 404 response, got %T", resp)
 	}
 }
@@ -239,8 +242,24 @@ func TestIntegrationDeletePet(t *testing.T) {
 	}
 
 	getResp, _ := srv.PetsGetPet(ctx, api.PetsGetPetRequestObject{PetID: created.ID})
-	if _, ok := getResp.(api.PetsGetPet404JSONResponse); !ok {
+	if _, ok := getResp.(api.PetsGetPet404ApplicationProblemPlusJSONResponse); !ok {
 		t.Fatalf("expected 404 after delete, got %T", getResp)
+	}
+}
+
+func TestIntegrationDeletePetNotFound(t *testing.T) {
+	srv := newIntegrationServer(t)
+
+	resp, err := srv.PetsDeletePet(context.Background(), api.PetsDeletePetRequestObject{PetID: 99999})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	notFound, ok := resp.(api.PetsDeletePet404ApplicationProblemPlusJSONResponse)
+	if !ok {
+		t.Fatalf("expected 404 response, got %T", resp)
+	}
+	if notFound.Type != "urn:problem-type:contractkit:resourceNotFound" {
+		t.Fatalf("unexpected problem type: %s", notFound.Type)
 	}
 }
 

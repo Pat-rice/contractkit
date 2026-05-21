@@ -50,11 +50,28 @@ func (e PetKind) Valid() bool {
 	}
 }
 
-// Error defines model for Error.
-type Error struct {
-	Code    string              `json:"code"`
-	Details *[]ValidationDetail `json:"details,omitempty"`
-	Message string              `json:"message"`
+// Defines values for ProblemErrorIn.
+const (
+	Body   ProblemErrorIn = "body"
+	Header ProblemErrorIn = "header"
+	Path   ProblemErrorIn = "path"
+	Query  ProblemErrorIn = "query"
+)
+
+// Valid indicates whether the value is a known member of the ProblemErrorIn enum.
+func (e ProblemErrorIn) Valid() bool {
+	switch e {
+	case Body:
+		return true
+	case Header:
+		return true
+	case Path:
+		return true
+	case Query:
+		return true
+	default:
+		return false
+	}
 }
 
 // NewPet defines model for NewPet.
@@ -83,18 +100,32 @@ type PetPage struct {
 	NextCursor *string `json:"nextCursor,omitempty"`
 }
 
+// Problem defines model for Problem.
+type Problem struct {
+	Detail   *string         `json:"detail,omitempty"`
+	Errors   *[]ProblemError `json:"errors,omitempty"`
+	Instance *string         `json:"instance,omitempty"`
+	Status   int32           `json:"status"`
+	Title    string          `json:"title"`
+	Type     string          `json:"type"`
+}
+
+// ProblemError defines model for ProblemError.
+type ProblemError struct {
+	Detail string         `json:"detail"`
+	In     ProblemErrorIn `json:"in"`
+	Name   string         `json:"name"`
+	Rule   string         `json:"rule"`
+}
+
+// ProblemErrorIn defines model for ProblemError.In.
+type ProblemErrorIn string
+
 // UpdatePet defines model for UpdatePet.
 type UpdatePet struct {
 	Age  *int32   `json:"age,omitempty" validate:"omitempty,gte=0,lte=100"`
 	Kind *PetKind `json:"kind,omitempty" validate:"omitempty,oneof=dog cat fish bird reptile"`
 	Name *string  `json:"name,omitempty" validate:"omitempty,min=1,max=255"`
-}
-
-// ValidationDetail defines model for ValidationDetail.
-type ValidationDetail struct {
-	Field   string `json:"field"`
-	Message string `json:"message"`
-	Rule    string `json:"rule"`
 }
 
 // PetsListPetsParams defines parameters for PetsListPets.
@@ -460,10 +491,10 @@ func (response PetsCreatePet201JSONResponse) VisitPetsCreatePetResponse(w http.R
 	return json.NewEncoder(w).Encode(response)
 }
 
-type PetsCreatePet400JSONResponse Error
+type PetsCreatePet400ApplicationProblemPlusJSONResponse Problem
 
-func (response PetsCreatePet400JSONResponse) VisitPetsCreatePetResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
+func (response PetsCreatePet400ApplicationProblemPlusJSONResponse) VisitPetsCreatePetResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(400)
 
 	return json.NewEncoder(w).Encode(response)
@@ -485,10 +516,10 @@ func (response PetsDeletePet204Response) VisitPetsDeletePetResponse(w http.Respo
 	return nil
 }
 
-type PetsDeletePet404JSONResponse Error
+type PetsDeletePet404ApplicationProblemPlusJSONResponse Problem
 
-func (response PetsDeletePet404JSONResponse) VisitPetsDeletePetResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
+func (response PetsDeletePet404ApplicationProblemPlusJSONResponse) VisitPetsDeletePetResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(404)
 
 	return json.NewEncoder(w).Encode(response)
@@ -511,10 +542,10 @@ func (response PetsGetPet200JSONResponse) VisitPetsGetPetResponse(w http.Respons
 	return json.NewEncoder(w).Encode(response)
 }
 
-type PetsGetPet404JSONResponse Error
+type PetsGetPet404ApplicationProblemPlusJSONResponse Problem
 
-func (response PetsGetPet404JSONResponse) VisitPetsGetPetResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
+func (response PetsGetPet404ApplicationProblemPlusJSONResponse) VisitPetsGetPetResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(404)
 
 	return json.NewEncoder(w).Encode(response)
@@ -538,19 +569,19 @@ func (response PetsUpdatePet200JSONResponse) VisitPetsUpdatePetResponse(w http.R
 	return json.NewEncoder(w).Encode(response)
 }
 
-type PetsUpdatePet400JSONResponse Error
+type PetsUpdatePet400ApplicationProblemPlusJSONResponse Problem
 
-func (response PetsUpdatePet400JSONResponse) VisitPetsUpdatePetResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
+func (response PetsUpdatePet400ApplicationProblemPlusJSONResponse) VisitPetsUpdatePetResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(400)
 
 	return json.NewEncoder(w).Encode(response)
 }
 
-type PetsUpdatePet404JSONResponse Error
+type PetsUpdatePet404ApplicationProblemPlusJSONResponse Problem
 
-func (response PetsUpdatePet404JSONResponse) VisitPetsUpdatePetResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
+func (response PetsUpdatePet404ApplicationProblemPlusJSONResponse) VisitPetsUpdatePetResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(404)
 
 	return json.NewEncoder(w).Encode(response)
@@ -776,25 +807,26 @@ func (sh *strictHandler) PetsUpdatePet(w http.ResponseWriter, r *http.Request, p
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"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",
+	"/ytms0LFFAAA",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

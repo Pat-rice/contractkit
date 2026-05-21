@@ -40,8 +40,9 @@ model NewPet {
   age: int32;
 
   @added(Versions.v2)
+  @maxItems(32)
   @extension("x-oapi-codegen-extra-tags",
-    #{ validate: "omitempty,dive,min=1,max=64" })
+    #{ validate: "omitempty,max=32,dive,min=1,max=64" })
   tags?: string[];
 }
 
@@ -61,8 +62,9 @@ model UpdatePet {
   age?: int32;
 
   @added(Versions.v2)
+  @maxItems(32)
   @extension("x-oapi-codegen-extra-tags",
-    #{ validate: "omitempty,dive,min=1,max=64" })
+    #{ validate: "omitempty,max=32,dive,min=1,max=64" })
   tags?: string[];
 }
 
@@ -71,14 +73,19 @@ model PetPage {
   nextCursor?: string;
 }
 
-model ValidationDetail {
-  field: string;
-  rule: string;
-  message: string;
+@error
+model Problem {
+  type: url;
+  title: string;
+  status: int32;
+  detail?: string;
+  instance?: url;
+  errors?: ProblemError[];
 }
 
-model Error {
-  code: string;
-  message: string;
-  details?: ValidationDetail[];
+model ProblemError {
+  name: string;
+  in: "body" | "query" | "path" | "header";
+  rule: string;
+  detail: string;
 }
