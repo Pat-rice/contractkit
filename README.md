@@ -1,3 +1,4 @@
+# WIP 
 # contractkit — Spec-First, Multi-Version Go API Template
 
 A reference template for building Go HTTP APIs where the **API contract is the source of truth** and **multiple API versions are first-class citizens**.
